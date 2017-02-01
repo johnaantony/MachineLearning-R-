@@ -1,0 +1,270 @@
+---
+title: 'HW on Handling Large Datasets: Questions'
+output: html_document
+Name: John Antony
+
+---
+
+Turn in your HW on this Rmarkdown file. Add your names here at the top. Your answers should be neatly arranged in blocks of code below; insert code blocks as needed. Use the markdown language to add any text you need to explain your homework. 
+
+##Getting and Handling Large Data Sets
+
+####GET THE DATA
+
+You will acquire and analyze a real dataset on baby name popularity provided by the Social Security Administration. To warm up, we will ask you a few simple questions that can be answered by inspecting the data.
+
+The data can be downloaded in zip format from:
+http://www.ssa.gov/oact/babynames/state/namesbystate.zip  (~22MB)
+
+#### QUESTION 1
+Please describe the format of the data files. Can you identify any limitations or distortions of the data.
+```{r}
+print("All the file are in comma separated format, but saved as text files.")
+cat("\nThere are no column headers in all the files")
+```
+
+
+First, download the zip file and unzip it to grab the contents. You will see lots of different files. Store them in a directory called "namesbystate". Then we write R code to read those files and put them together. 
+```{r}
+library(data.table)
+filenames = list.files("/Users/JohnAntony/Desktop/Main/Applications/R/MachineLearning/HW2/Final/namesbystate", pattern="*.TXT", full.names=TRUE)
+namesbystate = do.call(rbind, lapply(filenames, read.table, sep=","))
+colnames(namesbystate) = c("STATE","GENDER","YEAR","NAME","COUNT")
+cat("\n Now let's do a sanity check of data. Quick way to check the structure of data.frame:")
+str(namesbystate)
+```
+
+#### QUESTION 2
+What is the most popular name of all time across both genders? 
+```{r}
+#We are going to rollup data by names and find popularity irrespective of gender
+popular_names = data.frame(aggregate(COUNT ~ NAME,namesbystate,sum))
+head(popular_names[rev(order(popular_names$COUNT)),])
+print("As you can see the most popular name is James")
+```
+
+
+#### QUESTION 3
+What is the most gender ambiguous name in 2013? 1945? (you need to come up with an ambiguity metric, so think about how you may want to implement this. You may of course search for definitions of ambiguity.)
+```{r}
+#We are trying to filetr data for 2013 and 1945 as we want to analyze data for those periods
+names_data_2013 = dplyr::filter(namesbystate, YEAR == 2013)
+names_data_1945 = dplyr::filter(namesbystate, YEAR == 1945)
+#Now let's rollup data by Name
+names_data_2013 = data.frame(aggregate(COUNT ~ NAME,names_data_2013,sum))
+names_data_1945 = data.frame(aggregate(COUNT ~ NAME,names_data_1945,sum))
+
+#In order to find gender ambiguity we are applying filters and aggregating data based on Names
+names_data_2013_F = dplyr::filter(namesbystate, YEAR == 2013 & GENDER =="F")
+names_data_2013_F = data.frame(aggregate(COUNT ~ NAME,names_data_2013_F,sum))
+names_data_2013_F = dplyr::rename(names_data_2013_F,COUNT_F=COUNT)
+names_data_2013_M = dplyr::filter(namesbystate, YEAR == 2013 & GENDER =="M")
+names_data_2013_M = data.frame(aggregate(COUNT ~ NAME,names_data_2013_M,sum))
+names_data_2013_M = dplyr::rename(names_data_2013_M,COUNT_M=COUNT)
+names_data_1945_F = dplyr::filter(namesbystate, YEAR == 1945 & GENDER =="F")
+names_data_1945_M = dplyr::filter(namesbystate, YEAR == 1945 & GENDER =="F")
+
+#We are trying to create a data frame which has all the names and counts for both the genders and total count
+names_data_2013_frame = dplyr::left_join(names_data_2013,names_data_2013_F,by = c("NAME"))
+names_data_2013_frame = dplyr::left_join(names_data_2013_frame,names_data_2013_M,by = c("NAME"))
+
+#As we don't require NA rows we are filtering them. As we dont want to compare a name which has data only for male or female
+names_data_2013_frame = dplyr::filter(names_data_2013_frame, !is.na(COUNT_F) & !is.na(COUNT_M))
+
+#Now we are deriving the ambiquity metric i.e dividing total count by any gender count
+names_data_2013_frame = dplyr::mutate(names_data_2013_frame,PCT_AMBIQUITY = COUNT_F/COUNT)
+#Ideally if we have a 0.5 ratio it should be the most ambiguous name
+names_data_2013_frame = dplyr::filter(names_data_2013_frame,PCT_AMBIQUITY==0.5)
+
+head(dplyr::arrange(names_data_2013_frame,desc(PCT_AMBIQUITY)))
+```
+
+
+
+
+#### QUESTION 4
+Of the names represented in the data, find the name that has had the largest percentage increase in popularity since 1980. Largest decrease?
+```{r}
+DT = do.call(rbind, lapply(filenames, read.table, sep=","))
+colnames(DT) <- c("State", "Sex", "Year", "Name", "Count")
+
+#As we know that data for 1980 and 2015 are required for calculating percentage difference between 1980 and 2015
+y1980names = DT[DT$Year == 1980, ]
+y2015names = DT[DT$Year == 2015, ]
+
+#Now let's rollup the data by Name
+count1980names = aggregate(Count ~ Name, y1980names, sum)
+count2015names = aggregate(Count ~ Name, y2015names, sum)
+
+#Creating a data frame with the names from 1980 and 2015. This may require resetting NA values to 0
+countcomp = merge(x = count1980names, y = count2015names, by = "Name", all.x = TRUE)
+countcomp[is.na(countcomp)] <- 0
+
+#Counting the percentage change between 1980 and 2015
+countcomp$percent = ((countcomp$Count.y - countcomp$Count.x)/countcomp$Count.x)*100
+countcomp = countcomp[order(-countcomp$percent), ]
+head(countcomp)
+tail(countcomp)
+
+#Count.X denotes data for 1980 and Count.Y denotes data for 2015
+```
+
+
+
+#### QUESTION 5
+Can you identify names that may have had an even larger increase or decrease in popularity? (This requires you to consider every year as the start year and find the greatest increase/descrease across all years. Print out the top name for growth from each year.)
+
+
+This gives interesting results, and may be used in a different way with a rolling window than using all the data. 
+
+```{r}
+#We will be using dplyr and quantmod to make out computation faster as they are predefined and efficient libraries for data manuplation and deriving percentage change
+library(dplyr)
+library(quantmod)
+#namesbystate_from_1980 =  dplyr::filter(namesbystate,YEAR>=1980)
+#Before we start let's sort our data by NAME and YAER for better understanding
+namesbystate_from_sorted = dplyr::arrange(namesbystate,NAME,YEAR)
+#In order to answer question 5, we don't need the data at this level. So we can rollup data to YEAR and NAME level
+namesbystate_from_sorted = aggregate(COUNT ~ YEAR+NAME,namesbystate_from_sorted,sum)
+#namesbystate_from_sorted$PCT_CHG = 0
+#Now let's create a dummy data frame to store data that we are going to generate with percentage change for each name by year
+namesbystate_pct_chg = namesbystate_from_sorted[0,]
+#To achieve this we need the list of unique names to iterate over
+unique_names = dplyr::distinct(dplyr::select(namesbystate_from_sorted,NAME))
+
+#This loop will first filert rows by name for all the years and then derive percentage change for them. At the end these are binded to the dummy data frame we created earlier
+for (names_itr in unique_names$NAME){
+  temp_df = dplyr::filter(namesbystate_from_sorted,NAME==names_itr)
+  temp_pct_chg = data.frame(quantmod::Delt(temp_df$COUNT))
+  temp_df = dplyr::bind_cols(temp_df,temp_pct_chg)
+  namesbystate_pct_chg = rbind(namesbystate_pct_chg,temp_df)
+}
+
+#Here we are trying to sort data by year as we want to analysis for each year 
+namesbystate_pct_chg = dplyr::arrange(namesbystate_pct_chg,YEAR)
+#We don't want any NA's in our dataset as they wont contribute to our derivation
+namesbystate_pct_chg = namesbystate_pct_chg[complete.cases(namesbystate_pct_chg),]
+
+#Similarly, we will follow a the same path to get unique years to iterate on
+unique_years = dplyr::distinct(dplyr::select(namesbystate_pct_chg,YEAR))
+
+high_increase_by_year = namesbystate_pct_chg[0,]
+for (years_itr in unique_years$YEAR){
+  temp_yr_df = dplyr::filter(namesbystate_pct_chg,YEAR==years_itr)
+  temp_yr_df = temp_yr_df[which(temp_yr_df$Delt.1.arithmetic==max(temp_yr_df$Delt.1.arithmetic)),]
+  high_increase_by_year = rbind(high_increase_by_year,temp_yr_df)
+}
+print(high_increase_by_year)
+```
+
+
+#### QUESTION 6
+
+What insight can you extract from this dataset? Feel free to combine the baby names data with other publicly available datasets or APIs, but be sure to include code for accessing any alternative data that you use.
+
+This is an open-ended question and you are free to answer as you see fit. In fact, it would be great if you find a way to look at the data that is highly interesting.
+```{r}
+#Here we are trying to see the trend of names which were most popular in the entire dataset
+# Most popular Girls name
+femalenames = DT[DT$Sex == "F", ]
+countfemnames = aggregate(Count ~ Name, femalenames, sum)
+sortfemname = countfemnames[order(-countfemnames$Count), ]
+
+malenames = DT[DT$Sex == "M", ]
+countmalnames = aggregate(Count ~ Name, malenames, sum)
+sortmalname = countmalnames[order(-countmalnames$Count), ]
+
+#Using the popular name to find age
+popularfemname = DT[DT$Name == sortfemname[1, 1], ]
+countfemnames = aggregate(Count ~ Year + Name, popularfemname, sum)
+
+popularmalname = DT[DT$Name == sortmalname[1, 1], ]
+countmalnames = aggregate(Count ~ Year + Name, popularmalname, sum)
+countmalnames
+
+#Plotting Names
+plotpopnames = merge(x = countfemnames, y = countmalnames, by = "Year", all = TRUE)
+plotpopnames
+
+
+
+plot(plotpopnames$Year,plotpopnames$Count.y, type = "l", main = "Trend of Popular Names over Years", xlab = "Years", ylab = "Count", col = "red")
+lines(plotpopnames$Year, plotpopnames$Count.x,type = "l", col = " dark green")
+#The green line denotes for Mary and Red for James
+```
+
+
+#### QUESTION 7
+
+Go to the airlines data site: 
+http://stat-computing.org/dataexpo/2009/the-data.html. 
+Read in the airlines data set for 2008 into a data frame.
+How many rows of data do you have?
+```{r}
+library(data.table)
+#We are using fread as it used for faster read when having large file, in our case we have a 680 MB file which is quite huge. 
+#Let's see how fast does this function reads the file
+airline_df = fread("/Users/JohnAntony/Desktop/Main/Applications/R/MachineLearning/HW2/Final/2008.csv")
+#It took close to 14sec to load this file, i am really happy with this performanc :)
+cat("Number rows in the Airline data:",nrow(airline_df))
+```
+
+
+#### QUESTION 8
+
+Remove all rows of the data frame with missing data. How many rows of data do you have now?
+```{r}
+#We are using the complete.cases function, which return all the rows which are not having any missing values and we extract only them for further analysis 
+airline_df = airline_df[complete.cases(airline_df),]
+cat("Number of rows that we are going to use for analysis after removing NA rows:",nrow(airline_df))
+```
+
+
+#### QUESTION 9
+
+Fit one regression model each to explain "DepDelay" and "ArrDelay". Use your judgment as to which variables you might use to explain these outcomes. Use a subset of 1 million rows of the data you created with no missing data. Keep the remaining data for out-of-sample testing. (**Remember to factor all categorical variables.**)
+```{r}
+#We will first split the data for traing the model and to test.
+subset_airline_df = airline_df[1:1000000,]
+testdata_airline_df = airline_df[1000001:1524735,]
+
+#Now we are ready with our data. So let's run our regression
+#Before we go ahead with the Linear regression model we are trying to identify the variables which can act as independent variables to find Departure delay.
+model_formula = (DepDelay ~ (LateAircraftDelay+CarrierDelay+WeatherDelay+NASDelay+factor(DayOfWeek)))
+#Creating a model
+DepDelayModel = lm(model_formula, subset_airline_df)
+summary(DepDelayModel)
+
+#Similarly we will be implementing for Arrival Delay
+Arrdelayformula = (ArrDelay ~ (DepDelay+TaxiIn+Distance+AirTime+CarrierDelay+WeatherDelay+NASDelay+factor(DayOfWeek)+DepTime))
+Arrdelaymodel = lm(Arrdelayformula, subset_airline_df)
+summary(Arrdelaymodel)
+```
+```{r}
+#Let's see a scatter plot which better explains the relationship between the variables
+library(dplyr)
+dept_delay_time_df = dplyr::select(subset_airline_df,DepDelay,LateAircraftDelay,CarrierDelay,WeatherDelay,NASDelay)
+plot(dept_delay_time_df)
+
+```
+```{r}
+arr_delay_time_df = dplyr::select(subset_airline_df,ArrDelay,DepDelay,TaxiIn,Distance,AirTime,CarrierDelay,WeatherDelay,NASDelay)
+plot(arr_delay_time_df)
+```
+
+
+#### QUESTION 10
+
+Now take the fitted regression and predict delays using the remaining data from the no-missing data set (this is the data you did not use in the fitting the model). Compare this to the actual delays and report the absolute mean error in your prediction. 
+```{r}
+#Here we will test our model how well it is predicting based on our test data
+ArrivalDelayPrediction = predict(Arrdelaymodel,testdata_airline_df)
+DepDelayPrediction = predict(DepDelayModel,testdata_airline_df)
+
+#Let's see the MSE (Mean Squared Error), in order to check MSE we are using METRICS package
+library(Metrics)
+cat("The MSE for Arrival Delay Model is:",mae(testdata_airline_df$ArrDelay,ArrivalDelayPrediction))
+cat("\nThe MSE for Departure Delay Model is:",mae(testdata_airline_df$DepDelay,DepDelayPrediction))
+```
+
+
