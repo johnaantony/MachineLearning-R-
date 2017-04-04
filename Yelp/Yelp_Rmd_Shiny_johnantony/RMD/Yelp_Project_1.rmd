@@ -1,0 +1,204 @@
+---
+title: "Yelp Dataset Review"
+author: "John Antony"
+date: "March 4, 2017"
+output: html_document
+---
+
+#Reading review data from JSON file
+```{r}
+library(readr)
+library(dplyr)
+reviews_file_path = "/Users/JohnAntony/Desktop/Main/Applications/R/MachineLearning/Yelp/yelp_dataset_challenge_round9/yelp_academic_dataset_review.json"
+
+review_lines <- read_lines(reviews_file_path, n_max = 100000, progress = FALSE)
+
+library(stringr)
+library(jsonlite)
+
+reviews_combined <- str_c("[", str_c(review_lines, collapse = ", "), "]")
+
+reviews <- fromJSON(reviews_combined) %>%
+  flatten() %>%
+  tbl_df()
+#head(reviews)
+remove(review_lines,reviews_combined)
+```
+
+#Reading Business data from JSON File
+```{r}
+
+business_file_path = "/Users/JohnAntony/Desktop/Main/Applications/R/MachineLearning/Yelp/yelp_dataset_challenge_round9/yelp_academic_dataset_business.json"
+
+business_lines <- read_lines(business_file_path, n_max = 100000, progress = FALSE)
+
+business_combined <- str_c("[", str_c(business_lines, collapse = ", "), "]")
+
+business <- fromJSON(business_combined) %>%
+  flatten() %>%
+  tbl_df()
+
+#head(business)
+business[order(business$business_id),]
+remove(business_combined,business_lines)
+```
+
+# Cleanup 
+```{r}
+rest_reviews = aggregate(text ~ business_id, data = reviews, paste, collapse = ",")
+rest_reviews$text = tolower(rest_reviews$text)
+#head(rest_reviews)
+```
+
+# Defining functions for Sentiment Scoring and Pulling positive and negative words
+```{r}
+score.sentiment = function(sentences, pos.words, neg.words, .progress='none')
+{
+	require(plyr)
+	require(stringr)
+	
+	# we got a vector of sentences. plyr will handle a list or a vector as an "l" for us
+	# we want a simple array of scores back, so we use "l" + "a" + "ply" = laply:
+	scores = laply(sentences, function(sentence, pos.words, neg.words) {
+		
+		# clean up sentences with R's regex-driven global substitute, gsub():
+		sentence = gsub('[[:punct:]]', '', sentence)
+		sentence = gsub('[[:cntrl:]]', '', sentence)
+		sentence = gsub('\\d+', '', sentence)
+		# and convert to lower case:
+		sentence = tolower(sentence)
+
+		# split into words. str_split is in the stringr package
+		word.list = str_split(sentence, '\\s+')
+		# sometimes a list() is one level of hierarchy too much
+		words = unlist(word.list)
+
+		# compare our words to the dictionaries of positive & negative terms
+		pos.matches = match(words, pos.words)
+		neg.matches = match(words, neg.words)
+	
+		# match() returns the position of the matched term or NA
+		# we just want a TRUE/FALSE:
+		pos.matches = !is.na(pos.matches)
+		neg.matches = !is.na(neg.matches)
+
+		# and conveniently enough, TRUE/FALSE will be treated as 1/0 by sum():
+		score = sum(pos.matches) - sum(neg.matches)
+
+		return(score)
+	}, pos.words, neg.words, .progress=.progress )
+
+	scores.df = data.frame(score=scores, text=sentences)
+	return(scores.df)
+}
+
+HIDict = readLines("/Users/JohnAntony/Desktop/Main/Applications/R/MachineLearning/data_files/inqdict.txt")
+dict_pos = HIDict[grep("Pos",HIDict)]
+poswords = NULL
+for (s in dict_pos) {
+	s = strsplit(s,"#")[[1]][1]
+	poswords = c(poswords,strsplit(s," ")[[1]][1])
+}
+dict_neg = HIDict[grep("Neg",HIDict)]
+negwords = NULL
+for (s in dict_neg) {
+	s = strsplit(s,"#")[[1]][1]
+	negwords = c(negwords,strsplit(s," ")[[1]][1])
+}
+poswords = tolower(poswords)
+negwords = tolower(negwords)
+pos.words = unique(poswords)
+neg.words = unique(negwords)
+```
+
+# Sentiment Score for Review Texts
+```{r}
+score = score.sentiment(rest_reviews$text, pos.words, neg.words)
+rest_reviews_score = cbind(rest_reviews$business_id, score$score)
+colnames(rest_reviews_score) <- c("business_id", "SentimentScore")
+rest_reviews_score = as.data.frame(rest_reviews_score)
+
+#rest_reviews_score
+```
+# Creating Dataframe for regression
+```{r}
+suppressMessages(library(dplyr)) 
+#business_score_rating = merge(x = rest_reviews_score[ ,c("SentimentScore")], y = business[ ,c("stars")],  by.rest_reviews_score='business_id', by.business='business_id', all.x = TRUE)
+
+business_score_rating = dplyr::left_join(rest_reviews_score, business, by = "business_id")
+business_score_rating = dplyr::select(business_score_rating, SentimentScore, stars)
+business_score_rating$SentimentScore <- as.numeric(as.character(business_score_rating$SentimentScore))
+#head(business_score_rating)
+
+```
+
+# Regression of Sentiment Score with Business Score
+```{r}
+res = lm(business_score_rating$SentimentScore ~ business_score_rating$stars)
+print(summary(res))
+```
+
+
+---------------------------------
+# Creating a Network Cloud on Positive and Negative Sentiments
+```{r}
+reviews_rest <- subset(reviews, business_id=="GdCIMZ9BTT4ywETWcByfJA")
+#tail(names(sort(table(reviews_rest$business_id))), 1)
+#head(reviews_rest)
+```
+# Getting the bigrams
+```{r}
+
+library(dplyr)
+library(tidytext)
+library(tidyr)
+
+reviews_text = subset(reviews_rest, select = c(text) )
+
+reviews_bigrams = reviews_text %>%
+  unnest_tokens(bigram, text, token = "ngrams", n = 2)
+#reviews_bigrams
+```
+
+# Using dplyr Count for counting the occurance of bigrams
+```{r}
+#reviews_bigrams %>% 
+#  dplyr::count(bigram, sort = TRUE)
+```
+
+# Bigram Cleaning for Text analysis
+```{r}
+bigrams_separated <- reviews_bigrams %>%
+  separate(bigram, c("word1", "word2"), sep = " ")
+
+bigrams_filtered <- bigrams_separated %>%
+  filter(!word1 %in% stop_words$word) %>%
+  filter(!word2 %in% stop_words$word) %>%
+  filter(word1 %in% neg.words)
+
+
+bigram_counts <- bigrams_filtered %>% 
+  dplyr::count(word1, word2, sort = TRUE)
+remove(reviews_bigrams)
+```
+
+# Using igraph to discover the network graph
+```{r}
+library(igraph)
+
+bigram_graph <- bigram_counts %>%
+  graph_from_data_frame()
+
+bigram_graph
+```
+
+```{r}
+library(ggraph)
+set.seed(2017)
+
+ggraph(bigram_graph, layout = "fr") +
+  geom_edge_link() +
+  geom_node_point() +
+  geom_node_text(aes(label = name), vjust = 1, hjust = 1)
+```
+

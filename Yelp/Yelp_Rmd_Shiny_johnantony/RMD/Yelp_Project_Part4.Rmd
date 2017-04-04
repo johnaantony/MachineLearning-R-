@@ -1,0 +1,111 @@
+---
+title: "Yelp Dataset Review"
+author: "John Antony"
+date: "March 15, 2017"
+output: html_document
+---
+
+#Loading required libraries
+```{r}
+library(jsonlite)
+library(stringr)
+library(readr)
+library(dplyr)
+library(tibble)
+require(itertools)
+```
+#Function to read data from JSON File and convert it into dataframe
+```{r }
+createDF <- function(jsonFile){
+  
+  lines <- read_lines(jsonFile, n_max = 100000, progress = FALSE)
+  combined <- str_c("[", str_c(lines, collapse = ", "), "]")
+  remove(lines)
+  df <- fromJSON(combined) %>%flatten() %>%tbl_df()
+  
+  df
+}
+
+```
+#Read the business and review json
+```{r}
+business.df <- createDF('/Users/JohnAntony/Desktop/Main/Applications/R/MachineLearning/Yelp/yelp_dataset_challenge_round9/yelp_academic_dataset_business.json')
+
+review.df <- createDF('/Users/JohnAntony/Desktop/Main/Applications/R/MachineLearning/Yelp/yelp_dataset_challenge_round9/yelp_academic_dataset_review.json')
+```
+
+###Analysis:By categorizing the popular types of restaurants that are present in a state, we can identify new opportunities for prospective business owners to start new projects.
+# For eg if the count of particular type of cusine is less in a particular state, it could be identified as potential opportunity to start that type of restaurant  in that state or if people in particular area prefer only one type of cuisine then it better to start the business
+#First, we filter the business data to get the Restaurant related information. The categories field provide this information but it is usually a list data type which contains all the variables that define the restaurant type like Fast food, burger, etc., 
+```{r}
+business_flat <- flatten(business.df)
+business_table <- as_data_frame(business_flat)
+
+
+```
+# To understand what type of restaurant are more common in the dataset we need to unnest the categories list and assign a value to each row
+```{r}
+business_table %>% mutate(categories = as.character(categories)) %>% select(categories)
+
+#Removing unneccessary variables
+business_table %>% 
+  select(-starts_with("hours"), -starts_with("attribute"))
+
+#counting number of restaurants
+library(stringr)
+business_table %>% select(-starts_with("hours"), -starts_with("attribute")) %>%
+  filter(str_detect(categories, "Restaurant"))
+
+# filtering only Business column and count 
+business_table %>% select(-starts_with("hours"), -starts_with("attribute")) %>%
+  filter(str_detect(categories, "Restaurant")) %>%
+  mutate(categories = as.character(categories)) %>% select(categories)
+
+library(tidyr)
+business_table %>% select(-starts_with("hours"), -starts_with("attribute")) %>%
+  filter(str_detect(categories, "Restaurant")) %>%
+  unnest(categories) %>%
+  select(name, categories)
+
+# to get count of categories in the table
+business_table %>% select(-starts_with("hours"), -starts_with("attribute")) %>%
+  filter(str_detect(categories, "Restaurant")) %>%
+  unnest(categories) %>%
+  select(name, categories) %>%
+  count(categories)
+
+
+
+```
+#What are the most common restaurant types per state / province?
+```{r}
+
+# Getting top counts and getting rid of common tags like "Restautant" and "Food"
+
+cat_table <- business_table %>% select(-starts_with("hours"), -starts_with("attribute")) %>%
+  filter(str_detect(categories, "Restaurant")) %>%
+  unnest(categories) %>%
+  filter(categories != "Restaurants") %>%
+  filter(categories != "Food") %>%
+  count(state, categories) %>%
+  arrange(desc(n))
+
+library(DT)
+datatable(cat_table, options = list(pageLength = 25))
+
+```
+
+
+#Analysis on whether lengthy reviews are useful
+```{r}
+master <- merge(business.df, review.df, by = "business_id")
+
+master$review_length <- nchar(master$text)
+x <- master$review_length
+y<-master$useful
+plot(x,y,xlab="review length",ylab="useful votes")
+
+```
+#From the plot we can infer that there is very little correlation between review length and usefulness of the review. THe more longer the review is the lesser the people interested to read the review. 
+
+
