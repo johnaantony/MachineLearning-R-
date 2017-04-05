@@ -1,0 +1,53 @@
+---
+title: "Logit Model - NCAA (Qyalys)"
+author: John Antony
+date: March 2nd, 2017
+output:
+  slidy_presentation: default
+  ioslides_presentation: default
+  beamer_presentation: default
+---
+
+
+### Logit Example
+
+For the NCAA data, take the top 32 teams and make their dependent variable 1, and that of the bottom 32 teams zero. Therefore, the teams that have $y=1$ are those that did not lose in the first round of the playoffs, and the teams that have $y=0$ are those that did. Estimation is done by maximizing the log-likelihood.  
+
+
+```{r}
+#Importing and displaying the NCAA dataset
+ncaa = read.table("data_files/ncaa.txt",header=TRUE)    
+
+y1 = 1:32
+y1 = y1*0+1
+y2 = y1*0
+y = c(y1,y2)
+```
+NCAA Team Data
+```{r}
+ncaa
+```
+
+----
+```{r}
+#Running the binomial logit function on the x variables for regression
+x = as.matrix(ncaa[4:14])
+h = glm(y~x, family=binomial(link="logit"))
+names(h)
+```
+----
+```{r}
+print(logLik(h))
+summary(h)
+```
+```{r}
+print(h)
+```
+
+----
+Printing the probability of each team winning the next match in the playoff. This model can be used for running probability of a sale (lead scoring) using various marketing/sales attributes. 
+
+```{r}
+h$fitted.values
+```
+
